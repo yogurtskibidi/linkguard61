@@ -1,1 +1,151 @@
+/*******************************************************************************
+ * ANTIVOL CONNECTÉ - LoRaWAN (TTN) + Ultrason + Buzzer 
+ * Activation : ABP (Activation by Personalisation)
+ * Région     : EU (868 MHz)
+ *******************************************************************************/
 
+#define CFG_EU 1  
+
+#include <lmic.h>
+#include <hal/hal.h>
+#include <SPI.h>
+
+static const u4_t  DEVADDR  = 0x260B8FFC;
+static const PROGMEM u1_t NWKSKEY[16] = { 0x9B, 0x8D, 0x1D, 0x43, 0xDD, 0x8C, 0xAF, 0xD4, 0x48, 0xC3, 0x31, 0xCA, 0xEE, 0x7D, 0x22, 0x08 };
+static const PROGMEM u1_t APPSKEY[16] = { 0x8D, 0x94, 0xEA, 0x14, 0x09, 0x9A, 0x73, 0xE7, 0xB0, 0x6A, 0x42, 0x98, 0xA8, 0xA9, 0x31, 0xA8 };
+
+void os_getArtEui (u1_t* buf) { }
+void os_getDevEui (u1_t* buf) { }
+void os_getDevKey (u1_t* buf) { }
+
+// --- TES VARIABLES INTACTES ---
+static uint8_t payload[2];  
+static osjob_t sendjob;
+bool loraSendPending = false;
+
+const lmic_pinmap lmic_pins = {
+  .nss  = 10,              
+  .rxtx = LMIC_UNUSED_PIN,
+  .rst  = 8,                
+  .dio  = {6, 6, 6},        
+};
+
+const int LPPIN = 4;  
+const int LAPIN = A0;  
+const int trigPin   = 9;  
+const int echoPin   = 5; 
+const int buzzerPin = 7;  
+
+const int DISTANCE_SEUIL = 15;  
+bool alarmeDeclenchee    = false;
+
+void onEvent(ev_t ev) {
+  switch (ev) {
+    case EV_TXCOMPLETE:
+      Serial.println(F("[LoRa] Envoi terminé (fenêtres RX incluses)"));
+      loraSendPending = false;
+      break;
+    case EV_RESET:      Serial.println(F("[LoRa] EV_RESET"));      break;
+    case EV_LINK_DEAD:  Serial.println(F("[LoRa] EV_LINK_DEAD"));  break;
+    default:                                                       break;
+  }
+}
+
+void do_send(osjob_t* j) {
+  if (LMIC.opmode & OP_TXRXPEND) {
+    Serial.println(F("[LoRa] TX déjà en cours, envoi ignoré"));
+    return;
+  }
+  LMIC_setTxData2(1, payload, sizeof(payload), 0);
+  Serial.println(F("[LoRa] Paquet mis en file d'envoi"));
+  loraSendPending = true;
+}
+
+void setup() {
+  Serial.begin(115200);
+  Serial.println(F("=== Démarrage du système antivol connecté ==="));
+
+  pinMode(LPPIN,    OUTPUT);
+  pinMode(trigPin,  OUTPUT);
+  pinMode(echoPin,  INPUT);
+  pinMode(buzzerPin, OUTPUT);
+
+  os_init();
+  LMIC_reset();
+  LMIC_setClockError(MAX_CLOCK_ERROR * 2 / 100);
+
+#ifdef PROGMEM
+  uint8_t appskey[sizeof(APPSKEY)];
+  uint8_t nwkskey[sizeof(NWKSKEY)];
+  memcpy_P(appskey, APPSKEY, sizeof(APPSKEY));
+  memcpy_P(nwkskey, NWKSKEY, sizeof(NWKSKEY));
+  LMIC_setSession(0x1, DEVADDR, nwkskey, appskey);
+#else
+  LMIC_setSession(0x1, DEVADDR, NWKSKEY, APPSKEY);
+#endif
+
+  LMIC_setupChannel(0, 868100000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);
+  LMIC_setupChannel(1, 868300000, DR_RANGE_MAP(DR_SF12, DR_SF7B), BAND_CENTI);
+  LMIC_setupChannel(2, 868500000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);
+
+  LMIC_setLinkCheckMode(0);
+  LMIC.dn2Dr = DR_SF9;
+  LMIC_setDrTxpow(DR_SF9, 20);
+
+  Serial.println(F("Système prêt ! Surveillance en cours..."));
+  Serial.println(F("-------------------------------------------"));
+}
+
+void loop() {
+  os_runloop_once();
+
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+
+  // Ajout du paramètre 20000µs pour ne pas bloquer le LoRa
+  long duree    = pulseIn(echoPin, HIGH, 20000);
+  int  distance = (duree == 0) ? 999 : (int)(duree * 0.034 / 2);
+
+  Serial.print(F("Distance : "));
+  Serial.print(distance);
+  Serial.print(F(" cm  |  Lumière : "));
+  Serial.print(readLight(), 0);
+  Serial.println(F(" lux"));
+
+  if (distance > DISTANCE_SEUIL && distance < 400) {
+
+    Serial.println(F("!!! ALERTE : OBJET RETIRÉ !!!"));
+    alarmeDeclenchee = true;
+
+    tone(buzzerPin, 3000);
+    delay(200);
+    noTone(buzzerPin);
+    delay(500);
+
+    if (!loraSendPending) {
+      payload[0] = 0x01;              
+      payload[1] = (uint8_t)distance;  
+      do_send(&sendjob);
+    }
+
+  } else if (alarmeDeclenchee) {
+
+    Serial.println(F("Objet remis en place. Fin de l'alerte."));
+    alarmeDeclenchee = false;
+    noTone(buzzerPin);
+
+    if (!loraSendPending) {
+      payload[0] = 0x00;              
+      payload[1] = (uint8_t)distance;
+      do_send(&sendjob);
+    }
+    delay(500);
+
+  } else {
+    Serial.println(F("-------------------------------------------"));
+    delay(500);
+  }
+}
