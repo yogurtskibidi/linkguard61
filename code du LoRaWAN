@@ -1,0 +1,160 @@
+/*******************************************************************************
+ * Version Finale Ultra-Légère pour ATmega32u4 (UCA Board)
+ *******************************************************************************/
+
+#define CFG_EU 1
+
+#include <lmic.h>
+#include <hal/hal.h>
+#include <SPI.h>
+#include <Wire.h>
+#include <Adafruit_Si7021.h>
+
+#define LAPIN A3 
+#define LPPIN 5 
+
+Adafruit_Si7021 sensor = Adafruit_Si7021();
+
+// Clés d'activation ABP
+static const u4_t DEVADDR = 0x260B8FFC;
+static const PROGMEM u1_t NWKSKEY[16] = {0x9B, 0x8D, 0x1D, 0x43, 0xDD, 0x8C, 0xAF, 0xD4, 0x48, 0xC3, 0x31, 0xCA, 0xEE, 0x7D, 0x22, 0x08};
+static const u1_t PROGMEM APPSKEY[16] = {0x8D, 0x94, 0xEA, 0x14, 0x09, 0x9A, 0x73, 0xE7, 0xB0, 0x6A, 0x42, 0x98, 0xA8, 0xA9, 0x31, 0xA8};
+
+void os_getArtEui (u1_t* buf) { }
+void os_getDevEui (u1_t* buf) { }
+void os_getDevKey (u1_t* buf) { }
+
+static osjob_t sendjob;
+
+static float temp = 0.0;
+static float humidity = 0.0;
+static float batvalue;
+static float light;
+
+const unsigned TX_INTERVAL = 30;
+
+// Pin mapping UCA Board
+const lmic_pinmap lmic_pins = {
+    .nss = 10,
+    .rxtx = LMIC_UNUSED_PIN,
+    .rst = 8,
+    .dio = {3, 7, 6},
+};
+
+long readVcc() {
+      long result;
+      ADMUX = _BV(REFS0) | _BV(MUX3) | _BV(MUX2) | _BV(MUX1);
+      delay(2); 
+      ADCSRA |= _BV(ADSC); 
+      while (bit_is_set(ADCSRA,ADSC));
+      result = ADCL;
+      result |= ADCH<<8;
+      result = 1126400L / result; 
+      return result;
+}
+
+float readLight() {
+      float result;
+      digitalWrite(LPPIN, HIGH); 
+      delay(1);
+      int sensorValue = analogRead(LAPIN);
+      float voltage = sensorValue * (batvalue / 1023.0)/100; 
+      result = voltage*200; 
+      digitalWrite(LPPIN, LOW); 
+      return result;
+}
+
+void updateEnvParameters() {
+        temp = sensor.readTemperature();
+        humidity = sensor.readHumidity();
+        batvalue = (int)(readVcc()/10);  
+        light = readLight();
+}
+
+// UNE SEULE ET UNIQUE DÉFINITION ULTRA-COURTE SANS TEXTE POUR GAGNER DE L'ESPACE
+void onEvent (ev_t ev) {
+    if (ev == EV_TXCOMPLETE) {
+        os_setTimedCallback(&sendjob, os_getTime() + sec2osticks(TX_INTERVAL), do_send);
+    }
+}
+
+void do_send(osjob_t* j){
+    if (LMIC.opmode & OP_TXRXPEND) {
+        // Envoi en cours, on attend
+    } 
+    else {      
+        updateEnvParameters();
+
+        int t = (int)(temp * 10.0);
+        int h = (int)(humidity * 2);
+        int bat = batvalue;
+        int l = (int)light;
+       
+        unsigned char mydata[15];
+        mydata[0] = 0x1;  // CH1
+        mydata[1] = 0x67; // Temp
+        mydata[2] = t >> 8;
+        mydata[3] = t & 0xFF;
+        mydata[4] = 0x2;  // CH2
+        mydata[5] = 0x68; // Humidity
+        mydata[6] = h & 0xFF;
+        mydata[7] = 0x3;  // CH3
+        mydata[8] = 0x2;  // Analog output
+        mydata[9] = bat >> 8;
+        mydata[10] = bat & 0xFF;
+        mydata[11] = 0x4; // CH4
+        mydata[12] = 0x65;// Luminosity
+        mydata[13] = l >> 8;
+        mydata[14] = l & 0xFF;
+            
+        LMIC_setTxData2(1, mydata, 15, 0);
+    }
+}
+
+void setup() {
+    Serial.begin(115200);
+    pinMode(LPPIN, OUTPUT);
+    digitalWrite(LPPIN, LOW);
+    pinMode(LAPIN, INPUT);
+    sensor.begin();
+
+    updateEnvParameters(); 
+
+    os_init();
+    LMIC_reset();
+   
+    LMIC_setClockError(MAX_CLOCK_ERROR * 10 / 100);
+
+    #ifdef PROGMEM
+    uint8_t appskey[sizeof(APPSKEY)];
+    uint8_t nwkskey[sizeof(NWKSKEY)];
+    memcpy_P(appskey, APPSKEY, sizeof(APPSKEY));
+    memcpy_P(nwkskey, NWKSKEY, sizeof(NWKSKEY));
+    LMIC_setSession (0x1, DEVADDR, nwkskey, appskey);
+    #else
+    LMIC_setSession (0x1, DEVADDR, NWKSKEY, APPSKEY);
+    #endif
+
+    // CONFIGURATION ET ALLÈGEMENT DES CANAUX EUROPE
+    #if defined(CFG_eu868)
+    LMIC_setupChannel(0, 868100000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);
+    LMIC_setupChannel(1, 868300000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);
+    LMIC_setupChannel(2, 868500000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);
+    
+    for (int i = 3; i <= 8; i++) {
+        LMIC_disableChannel(i);
+    }
+    #endif
+
+    LMIC_setLinkCheckMode(0);
+    LMIC.dn2Dr = DR_SF9;
+    LMIC_setDrTxpow(DR_SF7, 14);
+
+    LMIC.seqnoUp = 0;
+
+    do_send(&sendjob);
+}
+
+void loop() {
+    os_runloop_once();
+}
