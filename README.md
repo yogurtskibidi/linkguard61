@@ -5,6 +5,6 @@ Pour ce projet de CSF (Communication Sans Fil), nous avons eu comme projet de fa
 L'idée étant de poser l'objet sur le support, qui ce dernier comporte un capteur ultrason, et que si cet objet n'est plus détecté (seuil défini dans le code dans Arduino IDE), cela ferait retentir un buzzer qui permettra justement de signaler le vol en direct et envoyer un email à l'utilisateur. Bien entendu, si l'objet est remis en place, alors le buzzer en question cessera de sonner.
 Pour répondre aux exigences du cours "Communication sans fil", nous avons intégré la technologie LoRaWAN à notre projet. Ce protocole sans fil a été directement implémenté dans notre code via l'IDE Arduino.
 Ainsi, la carte transmet le booléen gérant la présence de l'objetvia le protocole LoRaWAN au réseau TTN, qui est lui même relié à la platforme Tago.io qui à pour tâche de prendre la variable donnée et d'en faire une action, ainsi lorsqu'il recoit l'absence de l'objet, cela enverra un mail à l'utilisateur.
-
+Au niveau de l'organisation, nous avons principalement travaillé le code et le câblage de la carte UCA lors de la première et deuxième semaines, puis nous avons entamé le code du LoRaWan suivi de la combinaison des deux codes qui a été notre plus gros problème. Puis finalement, lors de la dernière semaine, nous avons finis le montage de notre projet au fablab à l'aide de leur découpeur laser.
 
 
