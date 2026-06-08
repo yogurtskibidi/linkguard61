@@ -1,1 +1,77 @@
+// =========================================================================
+// 1. DÉCLARATION DES BROCHES (PINS) ET VARIABLES
+// =========================================================================
 
+// Broches pour l'antivol (Capteur ultrason + Buzzer)
+const int trigPin = 9;      // Broche Trig du capteur ultrason -> Pin D9
+const int echoPin = 5;     // Broche Echo du capteur ultrason -> Pin D5
+const int buzzerPin = 7;   // (+) du buzzer -> Pin D7
+
+// Paramètres de l'antivol
+int distanceInitiale = 15;  // Distance max (en cm) quand l'objet EST posé
+bool alarmeDeclenchee = false;
+
+// =========================================================================
+// 2. CONFIGURATION INITIALE (SETUP)
+// =========================================================================
+
+void setup() {
+  Serial.begin(9600);
+ 
+  pinMode(LPPIN, OUTPUT);
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+  pinMode(buzzerPin, OUTPUT); // Configure la broche du buzzer en sortie
+
+  Serial.println("Système antivol prêt !");
+  Serial.println("-----------------------------------");
+}
+
+// =========================================================================
+// 3. BOUCLE PRINCIPALE (LOOP)
+// =========================================================================
+void loop() {
+ 
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+ 
+  long duree = pulseIn(echoPin, HIGH);
+  int distance = duree * 0.034 / 2;
+
+  Serial.print("Distance : ");
+  Serial.print(distance);
+  Serial.println(" cm");
+
+  // Si l'objet est retiré
+  if (distance > distanceInitiale) {
+    Serial.println("!!! ALERTE : OBJET RETIRÉ !!!");
+    alarmeDeclenchee = true;
+   
+    // --- EFFET DE BIP INTERMITTENT (0.5s allumé / 0.5s éteint) ---
+    tone(buzzerPin, 3000); // Fait sonner le buzzer à une fréquence de 1000 Hz
+    delay(200);            // Attend 0,5 seconde pendant que ça sonne
+   
+    noTone(buzzerPin);     // Coupe le son du buzzer
+    delay(500);            // Attend 0,5 seconde de silence
+   
+    // (Futur emplacement du code pour l'envoi du message LoRA)
+  }
+ 
+  // Si l'objet est remis en place, on s'assure que le buzzer est bien éteint
+
+  else if (distance <= distanceInitiale && alarmeDeclenchee) {
+    Serial.println("Objet remis en place. Fin de l'alerte.");
+    alarmeDeclenchee = false;
+    noTone(buzzerPin); // Sécurité : on éteint le buzzer
+    delay(500);        // Petite pause classique
+  }
+ 
+  // Si tout va bien (objet présent et pas d'alarme)
+  else {
+    Serial.println("-----------------------------------");
+    delay(500); // Pause normale entre deux vérifications
+  }
+}
